@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software or results, please cite this repository."
+title: "TESS Small-Planet Recovery"
+authors:
+  - family-names: "Waqas"
+    given-names: "Ayesha"
+version: 1.0.0
+date-released: 2026-09-30
+repository-code: "https://github.com/ayeshawq1/tess-small-planet-recovery"
+url: "https://github.com/ayeshawq1/tess-small-planet-recovery"
+keywords:
+  - TESS
+  - exoplanets
+  - transit detection
+  - injection recovery
+  - Box Least Squares
+  - Transit Least Squares
+  - preprocessing
+  - stellar variability

@@ -1,0 +1,13 @@
+.venv/
+tess_small_planet_project/
+__pycache__/
+.ipynb_checkpoints/
+*.pyc
+*.part
+*.tmp
+*.log
+.lightkurve/
+mastDownload/
+direct_mast_cache/
+.DS_Store
+Thumbs.db
