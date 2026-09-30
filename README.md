@@ -364,8 +364,4 @@ Core references used in the project include:
 
 This repository preserves the full research trail, including development choices, frozen protocols, negative results, and the final held-out evaluation.
 
-## Citation
-
-Archived release:
-
 
