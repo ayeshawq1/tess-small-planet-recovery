@@ -4,6 +4,7 @@
 Injection-recovery benchmarking of small transiting planets in TESS light curves, including preprocessing bias, BLS vs TLS, adaptive preprocessing, held-out evaluation, and real TOI case studies.
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23058593.svg)](https://doi.org/10.5281/zenodo.23058593)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## Overview
 
@@ -358,8 +359,7 @@ Core references used in the project include:
 - NASA Exoplanet Archive.
 - MAST / TESS SPOC data products.
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23058593.svg)](https://doi.org/10.5281/zenodo.23058593)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 ---
 
 This repository preserves the full research trail, including development choices, frozen protocols, negative results, and the final held-out evaluation.
