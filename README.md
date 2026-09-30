@@ -3,6 +3,8 @@
 
 Injection-recovery benchmarking of small transiting planets in TESS light curves, including preprocessing bias, BLS vs TLS, adaptive preprocessing, held-out evaluation, and real TOI case studies.
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23058593.svg)](https://doi.org/10.5281/zenodo.23058593)
+
 ## Overview
 
 This repository contains the code, notebooks, configuration files, frozen result tables, figures, and manuscript materials for a controlled study of small-planet recovery in TESS light curves.
@@ -363,3 +365,10 @@ Add the license you want to use before making the repository public. For researc
 ---
 
 This repository preserves the full research trail, including development choices, frozen protocols, negative results, and the final held-out evaluation.
+
+## Citation
+
+Archived release:
+
+**Waqas, A. (2026). TESS Small-Planet Recovery (v1.0.0). Zenodo.**
+https://doi.org/10.5281/zenodo.23058593

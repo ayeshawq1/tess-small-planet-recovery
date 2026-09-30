@@ -6,8 +6,9 @@ authors:
     given-names: "Ayesha"
 version: 1.0.0
 date-released: 2026-09-30
+doi: "10.5281/zenodo.23058593"
 repository-code: "https://github.com/ayeshawq1/tess-small-planet-recovery"
-url: "https://github.com/ayeshawq1/tess-small-planet-recovery"
+url: "https://doi.org/10.5281/zenodo.23058593"
 keywords:
   - TESS
   - exoplanets
