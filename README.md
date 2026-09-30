@@ -358,10 +358,8 @@ Core references used in the project include:
 - NASA Exoplanet Archive.
 - MAST / TESS SPOC data products.
 
-## License
-
-Add the license you want to use before making the repository public. For research code, an MIT or BSD-3-Clause license is a common choice.
-
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23058593.svg)](https://doi.org/10.5281/zenodo.23058593)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ---
 
 This repository preserves the full research trail, including development choices, frozen protocols, negative results, and the final held-out evaluation.
@@ -370,5 +368,4 @@ This repository preserves the full research trail, including development choices
 
 Archived release:
 
-**Waqas, A. (2026). TESS Small-Planet Recovery (v1.0.0). Zenodo.**
-https://doi.org/10.5281/zenodo.23058593
+
