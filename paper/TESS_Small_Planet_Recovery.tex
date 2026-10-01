@@ -1,0 +1,745 @@
+\documentclass[11pt]{article}
+\usepackage[margin=0.85in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{float}
+\usepackage{placeins}
+\usepackage{flafter}
+\usepackage{needspace}
+\usepackage{siunitx}
+\usepackage{threeparttable}
+\usepackage{fancyhdr}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{titlesec}
+\usepackage{authblk}
+
+\hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue,pdfauthor={Ayesha Waqas},pdftitle={How Small a Planet Can TESS Really See?}}
+\captionsetup{font=small,labelfont=bf}
+\setlength{\parindent}{1.1em}
+\setlength{\parskip}{0pt}
+\setlist{nosep,leftmargin=*}
+\titleformat{\section}{\Large\bfseries}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{0.4em}{}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{TESS small-planet recovery study}
+\fancyhead[R]{Preprint}
+\fancyfoot[C]{\thepage}
+\setlength{\headheight}{12pt}
+
+\newcommand{\rprs}{$R_{\mathrm p}/R_\star$}
+\newcommand{\adapt}{\textsc{ADAPT-v1}}
+\newcommand{\sg}[1]{\textsc{SG\_#1}}
+\newcommand{\baseline}{\textsc{Baseline}}
+
+\title{\textbf{How Small a Planet Can TESS Really See?}\\
+\large A Frozen-Protocol Injection--Recovery Study of Preprocessing, Stellar Variability, Transit Search Algorithms, and Out-of-Sample Generalization}
+\author{Ayesha Waqas}
+\date{September 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Detectability of small transiting planets in TESS light curves depends not only on the intrinsic transit signal but also on preprocessing choices, stellar variability, cadence, and the search algorithm. We quantify these effects using a staged, frozen-protocol injection--recovery study built on real TESS Science Processing Operations Center (SPOC) light curves. A baseline Box Least Squares (BLS) pipeline was first validated blindly on five known hot-Jupiter systems and then evaluated on 1,000 synthetic transits injected multiplicatively into five development stars spanning nearly two orders of magnitude in robust photometric variability. The frozen baseline recovered the injected period exactly in 622/1,000 cases (62.2\%, 95\% Wilson interval 59.2--65.2\%). Paired Savitzky--Golay experiments showed that preprocessing materially changes both completeness and measurement fidelity: a 501-sample filter increased exact-period recovery to 73.3\%, but shifted the median recovered-depth fractional error from $-0.084$ to $-0.385$. On an identical 200-case subset, BLS and Transit Least Squares (TLS) achieved similar exact recovery (64.0\% and 63.0\%, respectively), while TLS required about 9.5 times the median search runtime. Motivated by the strong dependence on host variability, we constructed \adapt, a deterministic rule that chooses either the baseline or 501-sample detrending from the host light curve's robust RMS alone. On development data, small-planet exact recovery (\rprs$\leq0.025$) increased from 45.5\% to 64.5\%. The rule was then frozen and evaluated once on three untouched held-out stars containing 600 new injections. The predeclared small-planet completeness increased from 74.17\% (178/240) to 83.75\% (201/240), an absolute gain of 9.58 percentage points; 24 baseline misses became adaptive recoveries and one baseline recovery was lost. The host-aware bootstrap interval for the improvement was broad, $[0.000,0.288]$, because only one of three held-out hosts triggered adaptive detrending. Finally, three preselected real TOI case studies were searched blindly; none recovered the archive period within 1\%, emphasizing that favorable controlled injection recovery does not guarantee correct blind period identification in real systems. These results demonstrate a measurable recovery--bias trade-off and show that simple host-aware preprocessing can improve sensitivity in this restricted benchmark, while also exposing substantial limitations in generalization and physical parameter fidelity.
+\end{abstract}
+
+\noindent\textbf{Keywords:} TESS; transiting exoplanets; injection--recovery; completeness; detrending; stellar variability; Box Least Squares; Transit Least Squares; reproducibility.
+
+\section{Introduction}
+The transit method identifies planets through repeated decreases in stellar brightness when a planet crosses the projected disk of its host star. For a small planet and a uniform stellar disk, the transit depth scales approximately as
+\begin{equation}
+\delta \simeq \left(\frac{R_{\mathrm p}}{R_\star}\right)^2,
+\end{equation}
+so the signals of greatest interest for small planets are intrinsically shallow. TESS was designed to discover transiting planets around bright nearby stars, enabling efficient follow-up and characterization \cite{Ricker2015}. Its SPOC pipeline produces calibrated photometric data products and searches for transit-like periodicities \cite{Jenkins2016}. These data have made TESS exceptionally useful for exoplanet discovery, but the sensitivity of any downstream transit search still depends on the details of how a light curve is cleaned and searched.
+
+Injection--recovery experiments provide a direct way to measure this sensitivity. Rather than inferring detectability from idealized white-noise formulae, synthetic signals are inserted into observed data and passed through the same pipeline used for science targets. The recovered fraction then maps the empirical sensitivity of that specific data set and pipeline. This approach has a strong precedent in the Kepler literature, where injection experiments were used to characterize signal preservation and catalog completeness \cite{Christiansen2013,Christiansen2016,Christiansen2020}. The central lesson is that completeness is a property of a pipeline applied to a data population, not a universal number.
+
+A major source of pipeline dependence is preprocessing. Stellar variability and instrumental trends can dominate the amplitude of a shallow transit, motivating detrending or filtering before a period search. Yet the same smoothing operation can attenuate transit depth, distort duration, or even suppress a signal. Savitzky--Golay filtering \cite{SavitzkyGolay1964}, for example, preserves low-order local structure while smoothing high-frequency variation, but its impact depends on the window scale relative to both stellar variability and transit duration. A visually cleaner light curve therefore need not be a scientifically better light curve.
+
+Search method is another design choice. BLS \cite{Kovacs2002} models a periodic box-shaped decrement and remains a standard, computationally efficient transit-search algorithm. TLS \cite{HippkeHeller2019} instead evaluates a more transit-like template that includes ingress, egress, and limb-darkening structure, and has been shown to improve low-S/N recovery in some synthetic regimes. Whether that advantage persists for the particular cadence, noise, preprocessing, and period range of a given TESS experiment is an empirical question.
+
+This study asks a deliberately narrow question: \emph{how do preprocessing choice, host-star variability, signal strength, and search method affect the recovery of small injected transits in selected TESS light curves, and can a simple adaptive preprocessing rule improve recovery without being tuned on the final test stars?} The goal is not to estimate the global TESS occurrence-rate completeness function. Instead, the study is a controlled computational experiment with explicit development and held-out sets, paired injections, frozen recovery rules, preserved negative results, and a final blind test.
+
+The project was developed incrementally. We first validated data retrieval and BLS on known planets, then froze a baseline pipeline. We next built a physical transit injection engine using \texttt{batman} \cite{Kreidberg2015}, measured baseline completeness, quantified preprocessing bias on identical injections, compared BLS with TLS, and designed a simple variability-based adaptive rule using development stars only. Finally, we evaluated that rule on three untouched held-out hosts and applied the frozen pipeline to three real TESS Objects of Interest (TOIs). Figure~\ref{fig:workflow} summarizes the experimental flow.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.96\textwidth]{figs/workflow.pdf}
+\caption{Frozen experimental workflow. Real SPOC light curves are quality-filtered and normalized; synthetic BATMAN transits are multiplied into the real photometry; blind BLS/TLS searches return a top period; and the frozen \textsc{RECOVERY\_V2} rule assigns exact, alias, near-match, or miss categories. Preprocessing comparisons and \adapt\ tuning use development hosts only. Held-out hosts are opened only after code, threshold, metric, and success criterion are frozen.}
+\label{fig:workflow}
+\end{figure}
+
+\section{Study design and protocol chronology}
+The analysis was organized as a sequence of increasingly stringent experiments rather than as a single exploratory notebook. The order was deliberate. We first established that the data loader and blind period search could recover known strong transits. We then froze a common baseline, defined development control stars and held-out identities, froze recovery classes, and generated deterministic injection designs with stored random seeds. The 1,000-case baseline benchmark was frozen before preprocessing variants were compared. The BLS/TLS comparison used a deterministic balanced subset of the same injection universe. Only after those analyses were complete was the adaptive preprocessing rule designed and tuned on development stars. Its source hash, threshold, metric, success criterion, and evaluation script were frozen before the held-out light curves were opened. Finally, real TOI outputs were saved before archive parameters were used for comparison. This chronology is important because it separates exploratory development from the final out-of-sample claims and preserves negative outcomes rather than allowing target-specific retuning.
+
+\section{Data and software}
+\subsection{TESS photometry}
+Light curves were retrieved from MAST using Lightkurve \cite{Lightkurve2018} and, for the final held-out stage, a direct MAST download path when network/cache failures made the standard download route unreliable. The analysis used SPOC light curves and preferred \texttt{PDCSAP\_FLUX}; \texttt{SAP\_FLUX} was retained as a fallback. SPOC processing is itself nontrivial, so throughout this paper ``baseline'' means minimally processed \emph{SPOC PDCSAP} photometry rather than raw detector counts. SPOC and TESS processing are described by Jenkins et al. \cite{Jenkins2016}.
+
+For each selected sector, the pipeline retained samples satisfying finite time, finite flux, and \texttt{QUALITY == 0}. Flux was divided by its median. No additional outlier clipping was applied in the frozen baseline. Single sectors were used deterministically rather than stitching arbitrary collections of sectors, reducing hidden target-specific choices.
+
+Stellar masses, radii, and effective temperatures were retrieved from the TESS Input Catalog (TIC) via \texttt{astroquery} \cite{Stassun2019,Ginsburg2019}. Archive period/radius values for validation and TOI comparisons were obtained from the NASA Exoplanet Archive \cite{Akeson2013}. Core computations used NumPy/SciPy, Astropy \cite{Astropy2022}, Lightkurve, \texttt{batman}, TLS, pandas, and Joblib.
+
+\subsection{Known-planet validation sample}
+The frozen baseline was validated on five known short-period transiting systems (Table~\ref{tab:validation}). The published/reference period was not passed to the search; it was used only after the blind BLS result had been saved. All five systems were recovered to much better than the 1\% exact-period criterion.
+
+\begin{table}[htbp]
+\centering
+\caption{Known-planet blind validation of the frozen baseline.}
+\label{tab:validation}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Target & Sector & $P_{\rm ref}$ & $P_{\rm BLS}$ & Error (\%)\\
+\midrule
+WASP-18  & 2 & 0.941452 & 0.941499 & 0.00497\\
+WASP-19  & 9 & 0.788839 & 0.788770 & 0.00875\\
+WASP-43  & 9 & 0.813475 & 0.813505 & 0.00370\\
+WASP-121 & 7 & 1.274925 & 1.274923 & 0.00018\\
+WASP-4   & 2 & 1.338231 & 1.338249 & 0.00137\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Development hosts}
+Five approximately solar-type stars were frozen as development/control hosts before the main 1,000-case experiment (Table~\ref{tab:devhosts}). They deliberately span a wide range of observed robust RMS. The robust scatter statistic was
+\begin{equation}
+\sigma_{\rm rob}(x)=1.4826\,\mathrm{median}\left|x-\mathrm{median}(x)\right|.
+\end{equation}
+The observed values range from $1.01\times10^{-4}$ for HD~102365 to $9.57\times10^{-3}$ for HD~20630. This host-to-host variation became central to the later adaptive rule.
+
+\begin{table}[htbp]
+\centering
+\caption{Frozen development hosts and TIC stellar parameters. Cadence is the median time difference after quality filtering.}
+\label{tab:devhosts}
+\small
+\begin{tabular}{llllrrrrr}
+\toprule
+ID & Star & TIC & Sector & $M_\star/M_\odot$ & $R_\star/R_\odot$ & $T_{\rm eff}$ (K) & Robust RMS & Cadence (min)\\
+\midrule
+CONTROL-001 & 18 Sco    & 135656809 & 91 & 1.04 & 1.0391 & 5791 & 0.000194 & 0.333\\
+CONTROL-002 & HD 102365 & 454082369 & 10 & 1.01 & 0.9514 & 5672 & 0.000101 & 2.000\\
+CONTROL-003 & HD 76151  &  62569281 &  8 & 1.04 & 0.9839 & 5777 & 0.000239 & 2.000\\
+CONTROL-004 & HD 30495  & 117979951 &  5 & 1.05 & 0.9622 & 5834 & 0.001261 & 2.000\\
+CONTROL-005 & HD 20630  & 343813545 &  4 & 1.02 & 0.9455 & 5712 & 0.009572 & 2.000\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Held-out hosts}
+Three additional stars were fixed as the final held-out set before Week 11 experiments and remained untouched by BLS, injection, or tuning until the final evaluation. Their identities were HD~190406 (TIC~275240386, Sector~54), HD~38858 (TIC~176521059, Sector~6), and HD~10307 (TIC~327507922, Sector~18). When finally opened, their measured robust RMS values were $3.17\times10^{-4}$, $1.25\times10^{-4}$, and $1.63\times10^{-4}$, respectively (Table~\ref{tab:heldout}).
+
+\begin{table}[htbp]
+\centering
+\caption{Held-out hosts measured only after \adapt\ and the Week 15 primary outcome were frozen.}
+\label{tab:heldout}
+\small
+\begin{tabular}{llllrrrrr}
+\toprule
+ID & Star & TIC & Sector & $M_\star/M_\odot$ & $R_\star/R_\odot$ & Robust RMS & Cadence (min) & \adapt\ choice\\
+\midrule
+HELDOUT-001 & HD 190406 & 275240386 & 54 & 1.08 & 1.0666 & 0.000317 & 0.333 & \sg{501}\\
+HELDOUT-002 & HD 38858  & 176521059 &  6 & 1.02 & 0.9211 & 0.000125 & 2.000 & \baseline\\
+HELDOUT-003 & HD 10307  & 327507922 & 18 & 1.06 & 1.1841 & 0.000163 & 2.000 & \baseline\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Methods}
+\subsection{Frozen baseline preprocessing}
+The baseline preprocessing intentionally remained minimal: use the selected SPOC sector, retain finite samples with quality flag zero, prefer PDCSAP flux, divide by the median, and perform no additional detrending. This minimized the number of adjustable operations before the first completeness benchmark. The baseline configuration was frozen before the injection experiments.
+
+For detrended variants, normalized flux $f(t)$ was divided by a second-order Savitzky--Golay trend $g_W(t)$,
+\begin{equation}
+f_{\rm det}(t)=\frac{f(t)}{g_W(t)},
+\end{equation}
+with sample windows $W\in\{101,301,501\}$. The use of sample counts rather than a physical-time window is important: for the 20-s cadence stars a 501-point window spans roughly 2.8 hours, whereas for 2-min cadence stars it spans roughly 16.7 hours. This mismatch was preserved because it was part of the frozen experiment and is treated as a limitation rather than silently corrected after results were known.
+
+\subsection{Blind BLS search}
+BLS was implemented with \texttt{astropy.timeseries.BoxLeastSquares}. The period range was fixed at 0.5--15 days. Trial durations were 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, and 5.0 hours, with at least two transits required by the automatically generated period grid and a BLS oversampling factor of 10. The returned candidate was always the maximum-power solution; no published period or injected truth was used to narrow the search.
+
+For diagnostic purposes, a robust signal-detection-efficiency-like statistic was computed from the BLS power array $Q$:
+\begin{equation}
+\mathrm{SDE}_{\rm BLS}=\frac{Q_{\max}-\mathrm{median}(Q)}{\sigma_{\rm rob}(Q)}.
+\end{equation}
+An early pilot considered a universal SDE threshold of 6, but the threshold was rejected because all five no-injection development controls exceeded it. Consequently, SDE is reported only as a continuous diagnostic and is never used to define the primary recovery label or a false-positive rate.
+
+\subsection{Physical transit injection}
+Synthetic transits were generated with \texttt{batman} \cite{Kreidberg2015} and multiplied into the observed normalized TESS flux, preserving the real time stamps, data gaps, stellar variability, and residual instrumental structure. For a trial period $P$, stellar mass $M_\star$, and stellar radius $R_\star$, the scaled semi-major axis was computed from Kepler's third law,
+\begin{equation}
+\frac{a}{R_\star}=\frac{1}{R_\star}\left(\frac{G M_\star P^2}{4\pi^2}\right)^{1/3}.
+\end{equation}
+The impact parameter $b$ set the inclination through
+\begin{equation}
+i=\cos^{-1}\left(\frac{b}{a/R_\star}\right).
+\end{equation}
+All injected orbits were circular ($e=0$) with argument convention $\omega=90^\circ$, quadratic limb darkening $(u_1,u_2)=(0.3,0.2)$, and supersampling factor 7 at the observed cadence. The injection was multiplicative,
+\begin{equation}
+f_{\rm inj}(t)=f_{\rm real}(t)\,m_{\rm tr}(t),
+\end{equation}
+where $m_{\rm tr}(t)$ is the BATMAN relative-flux transit model. For each case, $b\sim U(0,0.7)$ and the epoch was uniformly randomized over one orbital cycle using a stored deterministic seed.
+
+\subsection{Frozen injection grid}
+The principal development benchmark used five hosts, four periods $P\in\{1,3,6,10\}$ days, five radius ratios \rprs$\in\{0.015,0.025,0.040,0.060,0.090\}$, and ten random repetitions per cell. This produced exactly 1,000 injections. Each period--size cell therefore contained 50 cases across the five hosts. Seeds 800001--801000 were stored with the design, allowing paired reruns of exactly the same physical injections under different preprocessing choices.
+
+The final held-out benchmark used the same four periods, five radius ratios, and ten repetitions on three new hosts, producing 600 unique injections. Each case was evaluated with \baseline\ and \adapt, giving 1,200 method--case rows. The held-out design and primary outcome were declared before the held-out light curves were opened.
+
+\subsection{Recovery classes}
+The frozen \textsc{RECOVERY\_V2} rule classified the top recovered period $\hat P$ using fractional errors relative to the injected period and its two simple harmonics. Exact recovery was defined by
+\begin{equation}
+\frac{|\hat P-P|}{P}\leq 0.01.
+\end{equation}
+A half-period alias satisfied $|\hat P-P/2|/(P/2)\leq0.01$, and a double-period alias satisfied $|\hat P-2P|/(2P)\leq0.01$. An exact-period fractional error between 1\% and 2\% was labeled \textsc{NEAR\_MATCH}; everything else was a \textsc{MISS}. The primary metric counted only \textsc{EXACT}. Alias-aware recovery counted \textsc{EXACT}, \textsc{HALF\_ALIAS}, and \textsc{DOUBLE\_ALIAS}. These rules were unit-tested and frozen before the 1,000-case benchmark.
+
+\subsection{Completeness and uncertainty}
+Completeness in a subset containing $n$ cases and $k$ exact recoveries was $\hat C=k/n$. Binomial Wilson intervals were used for reported completeness intervals. For the final adaptive-vs-baseline difference, a host-aware nonparametric bootstrap resampled the three held-out hosts with replacement; this deliberately treats host identity as the dependence unit rather than pretending all injections are independent draws from a universal population.
+
+\subsection{Depth and apparent-radius bias}
+BLS supplies a fitted box depth $\hat\delta$. In Week 12 we measured fractional depth error against the actual depth of the injected BATMAN model,
+\begin{equation}
+e_\delta=\frac{\hat\delta-\delta_{\rm model}}{\delta_{\rm model}}.
+\end{equation}
+To provide an interpretable depth-derived scale without claiming a full physical radius fit, we define an ``apparent radius ratio'' $r_{\rm app}=\sqrt{\delta}$. Its fractional error is
+\begin{equation}
+e_r=\frac{\sqrt{\hat\delta}-\sqrt{\delta_{\rm model}}}{\sqrt{\delta_{\rm model}}}.
+\end{equation}
+This corrected metric replaced an earlier diagnostic that had compared $\sqrt{\hat\delta}$ directly with the geometric injected \rprs, which is not strictly equivalent in limb-darkened, non-central transits. No injections or searches were rerun for the correction; only the derived radius-bias statistic changed.
+
+\subsection{BLS versus TLS and candidate vetting}
+Week 13 selected a deterministic 200-case subset: all five development hosts, all four periods, all five radius ratios, and repetitions 1 and 2. Both algorithms used baseline preprocessing and the same 0.5--15-day search interval. TLS was first validated on WASP-18 and WASP-43, recovering their known periods exactly. For the injection benchmark, runtime, exact recovery, alias-aware recovery, and recovery class were stored for both methods.
+
+Basic vetting metrics were calculated as evidence rather than as planet classifiers. These included odd--even depth differences, the ratio of a secondary-like feature near phase 0.5 to the primary depth, and individual-transit depth scatter where enough transits were observed. Because BLS and TLS define their detection statistics differently, their SDE-like values were not compared numerically as if they were on the same scale.
+
+\subsection{Adaptive preprocessing rule}
+The development experiments showed two facts simultaneously: (i) fixed detrending could improve recovery for some variable hosts, and (ii) the same detrending could suppress measured transit depth. We therefore defined a deliberately simple, truth-independent host-level rule using only robust RMS of the uninjected light curve:
+\begin{equation}
+\mathrm{method}(\sigma_{\rm rob})=
+\begin{cases}
+\baseline, & \sigma_{\rm rob}\leq 2.15\times10^{-4},\\
+\sg{501}, & \sigma_{\rm rob}>2.15\times10^{-4}.
+\end{cases}
+\label{eq:adapt}
+\end{equation}
+The threshold was tuned on development hosts only, compared with fixed-baseline, fixed-\sg{501}, and a reverse-rule ablation, then frozen as \adapt. Crucially, injected period, depth, radius ratio, or recovery outcome are not inputs to Eq.~\ref{eq:adapt}. Before any held-out evaluation, the code hash, threshold, configuration, primary metric, success criterion, and held-out script were frozen.
+
+\subsection{Predeclared held-out outcome}
+The primary held-out metric was exact-period completeness for ``small'' injections with \rprs$\leq0.025$. The primary effect was $C_{\adapt}-C_{\baseline}$ and the predeclared success criterion was simply a positive difference. Secondary outcomes included overall exact completeness, alias-aware completeness, depth bias, apparent-radius bias, no-injection BLS SDE, and runtime. The protocol explicitly prohibited retuning after observing held-out results.
+
+\subsection{Real TOI case studies}
+After the held-out result was frozen, three real TOI examples were selected under a written deterministic rule: archive period 0.5--15 days, reported planet radius $\leq3R_\oplus$, TESS magnitude $\leq12$, one confirmed-planet disposition and two candidate dispositions, and availability of a usable SPOC light curve. Within those constraints, targets were ordered by increasing reported planet radius, then increasing TESS magnitude, then TOI number. The selected targets were TOI~174.04 (confirmed-planet disposition at selection), TOI~4307.02 (planet candidate), and TOI~4580.01 (planet candidate). The archive period was not supplied to the search. Blind outputs were written to disk and hashed before archive comparison.
+
+\section{Validation}
+\subsection{WASP-18 preprocessing diagnostic}
+WASP-18 provided an early demonstration that correct period recovery does not imply unbiased signal measurement. Across no detrending and three Savitzky--Golay windows, the recovered BLS period remained 0.941499~d, only 0.00497\% from the reference period. The measured depth, however, varied by almost an order of magnitude (Table~\ref{tab:wasp18diag}). With no additional detrending the depth was 0.01033 and the simple depth-derived radius estimate was 14.62~$R_\oplus$; with a 101-sample filter the depth fell to 0.001214 and the same estimator returned only 5.01~$R_\oplus$. This diagnostic motivated the later paired bias experiment.
+
+\begin{table}[htbp]
+\centering
+\caption{WASP-18 preprocessing diagnostic. The period remains stable while depth is strongly altered. Radius is the early simple estimator used for diagnosis, not the corrected Week 12 apparent-radius metric.}
+\label{tab:wasp18diag}
+\small
+\begin{tabular}{lrrr}
+\toprule
+Preprocessing & $P$ (d) & Depth & $R_{\rm est}/R_\oplus$\\
+\midrule
+None      & 0.941499 & 0.010333 & 14.62\\
+SG 101    & 0.941499 & 0.001214 & 5.01\\
+SG 301    & 0.941499 & 0.006132 & 11.27\\
+SG 501    & 0.941499 & 0.008234 & 13.06\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Five-system blind validation}
+The five known systems in Table~\ref{tab:validation} were all recovered exactly under the common baseline configuration. This validation establishes that the basic data retrieval, period grid, and BLS implementation can recover strong short-period transits without target-specific tuning. It does not, by itself, establish sensitivity to small planets; that requires the injection benchmarks below.
+
+\section{Results}
+\subsection{Baseline injection--recovery completeness}
+The frozen baseline recovered 622 of 1,000 development injections exactly, giving $C=0.622$ with a 95\% Wilson interval of 0.592--0.652. Figure~\ref{fig:w11} shows the complete period--radius-ratio surface. Recovery declines systematically toward smaller \rprs\ and longer period. At \rprs$=0.015$, completeness was 0.40 at 1, 3, and 6~d and 0.32 at 10~d. At \rprs$=0.090$, the corresponding values were 0.80, 0.80, 0.80, and 0.66.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.78\textwidth]{figs/w11_heatmap.png}
+\caption{Week 11 frozen exact-period completeness. Each cell contains 50 injections (five hosts times ten repetitions). The annotation gives exact recoveries/attempts and completeness. The grid exposes both a size dependence and a period dependence, but also reflects strong host heterogeneity.}
+\label{fig:w11}
+\end{figure}
+
+Marginalized over period, completeness increased from 0.380 at \rprs$=0.015$ to 0.765 at \rprs$=0.090$. Marginalized over size, completeness decreased from 0.680 at 1~d to 0.528 at 10~d. The host dependence was even larger: HD~102365 achieved 200/200 exact recoveries, 18~Sco 183/200, HD~76151 137/200, HD~30495 102/200, and the most variable star, HD~20630, 0/200. Thus a single global completeness curve would hide the dominant effect of host variability in this sample.
+
+\begin{table}[htbp]
+\centering
+\caption{Frozen baseline completeness grid. Values are exact recoveries out of 50 in each cell.}
+\label{tab:w11grid}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+\rprs & 1 d & 3 d & 6 d & 10 d\\
+\midrule
+0.015 & 20 & 20 & 20 & 16\\
+0.025 & 30 & 29 & 25 & 22\\
+0.040 & 40 & 33 & 34 & 29\\
+0.060 & 40 & 40 & 39 & 32\\
+0.090 & 40 & 40 & 40 & 33\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Paired preprocessing experiment}
+All 1,000 development injections were rerun under \sg{101}, \sg{301}, and \sg{501}; the original baseline rows were reused, giving 4,000 paired method--case rows. Table~\ref{tab:w12} and Figure~\ref{fig:w12trade} show the core trade-off. \sg{101} reduced overall exact recovery to 0.510 and severely suppressed depths. Longer windows improved completeness: \sg{301} reached 0.691 and \sg{501} reached 0.733. Yet every detrending variant increased the magnitude of median negative depth bias. Relative to the baseline median $e_\delta=-0.084$, the medians were $-0.865$, $-0.564$, and $-0.385$ for 101, 301, and 501 samples.
+
+\begin{table}[htbp]
+\centering
+\caption{Week 12 paired preprocessing benchmark on identical 1,000 injections. Apparent-radius bias uses the corrected depth-derived definition.}
+\label{tab:w12}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+Method & Exact & Completeness & Alias-aware & Median $e_\delta$ & Median $e_r$ & Median control SDE\\
+\midrule
+\baseline & 622 & 0.622 & 0.634 & $-0.084$ & $-0.043$ & 34.70\\
+\sg{101} & 510 & 0.510 & 0.516 & $-0.865$ & $-0.633$ & 27.39\\
+\sg{301} & 691 & 0.691 & 0.691 & $-0.564$ & $-0.340$ & 16.98\\
+\sg{501} & 733 & 0.733 & 0.735 & $-0.385$ & $-0.216$ & 13.89\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}[t]{0.49\textwidth}
+\centering
+\includegraphics[width=\textwidth]{figs/w12_tradeoff.png}
+\caption{Overall recovery versus median transit-depth bias.}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.49\textwidth}
+\centering
+\includegraphics[width=\textwidth]{figs/w12_radius_bias.png}
+\caption{Corrected apparent-radius bias versus injected radius-ratio level.}
+\end{subfigure}
+\caption{Preprocessing bias. Longer Savitzky--Golay windows improve period recovery in this benchmark but continue to suppress measured depth and the depth-derived apparent radius.}
+\label{fig:w12trade}
+\end{figure}
+
+Paired switches reinforce that the completeness changes are not merely due to different random injections. Relative to baseline, \sg{501} recovered 143 cases that baseline missed while losing 32 baseline recoveries, a net gain of 111. \sg{301} gained 128 and lost 59 (net +69), whereas \sg{101} gained 44 and lost 156 (net $-112$). Among cases recovered exactly by both methods, all three Savitzky--Golay settings produced more negative depth suppression than baseline in 100\% of paired comparisons summarized by the experiment.
+
+The effect depended strongly on both size and period. For \sg{501}, exact completeness by \rprs\ was 0.425, 0.750, 0.765, 0.795, and 0.930 from smallest to largest. By period it was 0.880, 0.764, 0.704, and 0.584 at 1, 3, 6, and 10~d. The shortest \sg{101} window was especially damaging at long period (0.324 completeness at 10~d).
+
+\subsection{BLS versus TLS}
+TLS was validated on WASP-18 and WASP-43 before the injection comparison. It recovered 0.941515~d for WASP-18 (reference 0.941452~d) and 0.813332~d for WASP-43 (reference 0.813475~d), both within the frozen 1\% exact criterion.
+
+On the 200 paired injections, BLS recovered 128/200 exactly (0.640), while TLS recovered 126/200 (0.630). Both reached alias-aware completeness 0.640 because TLS had two half-period aliases. The final corrected alias table contained 128 exact and 72 misses for BLS; TLS contained 126 exact, two half aliases, and 72 misses. In paired terms, TLS recovered two cases BLS missed, while BLS recovered four that TLS missed; 124 were recovered by both and 70 by neither.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.78\textwidth]{figs/w13_bls_tls.png}
+\caption{BLS and TLS exact-period recovery on the identical 200-case subset. Median search runtime was 3.38~s for BLS and 32.13~s for TLS.}
+\label{fig:w13}
+\end{figure}
+
+The algorithms therefore had similar recovery in this restricted benchmark, but very different computational cost. Median search runtime was 3.38~s for BLS and 32.13~s for TLS, about 9.5 times slower for TLS. This result does not contradict demonstrations of TLS advantages in other regimes \cite{HippkeHeller2019}; it shows that those advantages are not automatic under this sample, search interval, preprocessing, cadence, and injected parameter grid.
+
+The vetting layer also did not yield a simple method-level separation. Median odd--even fractional differences were 0.199 (BLS) and 0.356 (TLS); median secondary-to-primary ratios were $-0.089$ and $-0.086$; and median relative individual-transit scatter was 0.129 and 0.138. These quantities are reported as diagnostics, not as calibrated probabilities of planethood.
+
+\subsection{Development of \adapt}
+The development-host outcomes suggested that a single fixed detrending choice was suboptimal. The two quietest stars (HD~102365 and 18~Sco) were already very strong under baseline preprocessing, while the noisier stars benefited substantially from \sg{501}. Eq.~\ref{eq:adapt} therefore chose baseline for the two development hosts below the RMS threshold and \sg{501} for the remaining three.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.78\textwidth]{figs/w14_adapt_dev.png}
+\caption{Small-planet development completeness for the main ablations. \adapt\ combines baseline processing for low-RMS hosts and \sg{501} for higher-RMS hosts.}
+\label{fig:w14}
+\end{figure}
+
+Table~\ref{tab:w14} shows the ablation results. \adapt\ produced 763/1,000 exact recoveries (0.763), exceeding both fixed baseline (0.622) and fixed \sg{501} (0.733). For the pre-specified small-planet subset \rprs$\leq0.025$, completeness was 0.645, compared with 0.455 for baseline and 0.5875 for fixed \sg{501}. The reverse rule, which intentionally applied \sg{501} to low-RMS hosts and baseline to high-RMS hosts, fell to 0.592 overall and 0.3975 for small planets. This ablation supports the direction of the variability-dependent mechanism within the development sample.
+
+\begin{table}[htbp]
+\centering
+\caption{Week 14 development ablation. Bias statistics are medians among exact recoveries.}
+\label{tab:w14}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+Method & Exact & Overall $C$ & Small exact & Small $C$ & Median $e_\delta$ & Median $e_r$\\
+\midrule
+Fixed baseline & 622 & 0.622 & 182/400 & 0.4550 & $-0.084$ & $-0.043$\\
+Fixed \sg{501} & 733 & 0.733 & 235/400 & 0.5875 & $-0.385$ & $-0.216$\\
+\adapt & 763 & 0.763 & 258/400 & 0.6450 & $-0.181$ & $-0.095$\\
+Reverse rule & 592 & 0.592 & 159/400 & 0.3975 & $-0.308$ & $-0.168$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Relative to baseline, \adapt\ converted 142 baseline misses to recoveries while losing one baseline recovery; 621 cases were recovered by both and 236 missed by both. Threshold ablation over six candidate cut points found the largest development small-planet completeness at $2.15\times10^{-4}$, the value subsequently frozen. Because this threshold was directly selected from development performance, its held-out evaluation is essential; the development gain alone is not evidence of generalization.
+
+\subsection{Frozen held-out evaluation}
+The final held-out run reconciled exactly: 600 unique injections, 1,200 paired method rows, 1,200 successful rows, and no failed rows. \adapt\ selected \sg{501} for HD~190406 and baseline for HD~38858 and HD~10307. Thus two-thirds of held-out hosts had identical baseline and adaptive processing by design.
+
+For the primary small-planet subset, \adapt\ recovered 201/240 (0.8375; Wilson interval 0.7856--0.8788), while fixed baseline recovered 178/240 (0.7417; interval 0.6828--0.7929). The absolute difference was +0.0958, meeting the predeclared criterion. In paired terms, 24 baseline misses became adaptive recoveries, one baseline recovery became an adaptive miss, 177 were recovered by both, and 38 missed by both. The host-aware bootstrap 95\% interval for the difference was $[0.0000,0.2875]$.
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}[t]{0.49\textwidth}
+\centering
+\includegraphics[width=\textwidth]{figs/w15_generalization.png}
+\caption{Development and held-out small-planet completeness.}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.49\textwidth}
+\centering
+\includegraphics[width=\textwidth]{figs/w15_by_size.png}
+\caption{Held-out completeness by injected \rprs.}
+\end{subfigure}
+\caption{Generalization of the frozen adaptive rule. The largest held-out gain occurs at the smallest radius-ratio level, while medium and large signals are already near saturation.}
+\label{fig:w15gen}
+\end{figure}
+
+Across all 600 held-out injections, exact completeness was 0.9233 for \adapt\ and 0.8900 for baseline; alias-aware completeness was 0.9283 and 0.8950. The gain was strongly concentrated in the smallest signals: at \rprs$=0.015$, completeness rose from 0.5083 to 0.6917. At 0.025, the methods were nearly identical (0.9750 versus 0.9833), and at larger sizes they were essentially saturated.
+
+By period, \adapt\/baseline completeness was 1.000/0.973 at 1~d, 0.973/0.907 at 3~d, 0.900/0.853 at 6~d, and 0.820/0.827 at 10~d. The final point is important: the adaptive method was not uniformly superior in every regime. Its overall gain comes from a subset of host--signal conditions.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.78\textwidth]{figs/w15_by_host.png}
+\caption{Held-out exact completeness by host. The adaptive and baseline bars are identical for the two hosts assigned baseline preprocessing; the entire host-level gain comes from HD~190406, which triggered \sg{501}.}
+\label{fig:w15host}
+\end{figure}
+
+Host-level results make the generalization limit explicit. For HD~190406, exact completeness increased from 0.82 to 0.92. HD~38858 remained 0.98 for both methods and HD~10307 remained 0.87 for both. Therefore the 9.58-point primary gain should not be interpreted as evidence that the same improvement would occur across an arbitrary TESS stellar population. It is a successful frozen test within a very small host sample, with one host receiving a changed method.
+
+The held-out depth trade-off persisted. Median $e_\delta$ among exact recoveries was $-0.0794$ for baseline and $-0.1083$ for \adapt; median apparent-radius error was $-0.0405$ and $-0.0557$. Thus the adaptive method improved recovery at the cost of somewhat stronger depth suppression.
+
+\subsection{No-injection controls}
+No-injection control searches were retained to show how strongly a period finder can respond even when no synthetic planet was added. In development data, baseline median control BLS SDE was 34.70 and maximum SDE 144.11; \sg{501} reduced those values to 13.89 and 15.22. In the held-out stars, baseline median control SDE was 17.27 with maximum 53.73, compared with 11.50 and 17.27 under \adapt.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.78\textwidth]{figs/w15_control.png}
+\caption{Held-out no-injection control BLS SDE. These are continuous diagnostics only. Because no binary threshold was frozen, this figure must not be interpreted as a measured false-positive rate.}
+\label{fig:controls}
+\end{figure}
+
+The most striking held-out example is HD~190406: baseline returned SDE 53.73 at 4.589~d and depth $2.48\times10^{-4}$, while adaptive \sg{501} returned SDE 7.83 at 1.007~d and depth $1.2\times10^{-5}$. This supports the idea that detrending can reduce strong structured variability seen by BLS, but the study did not define a calibrated binary threshold and therefore does not claim a false-positive reduction rate.
+
+\subsection{Real TOI case studies}
+All three real case-study hosts exceeded the adaptive RMS threshold and therefore received \sg{501}. The blind pipeline found periods of 14.9509, 9.0432, and 8.1711~d for TOI~174.04, TOI~4307.02, and TOI~4580.01, whereas the archive periods at comparison time were 3.97668, 4.65458, and 0.916799~d. None matched within 1\%. The fractional period errors were 2.760, 0.943, and 7.913, respectively. Recovered depths were also substantially larger than archive depth estimates for all three cases.
+
+\clearpage
+\begin{figure}[H]
+\centering
+\begin{minipage}[t]{0.48\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{figs/real_case_1.png}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.48\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{figs/real_case_2.png}
+\end{minipage}
+
+\vspace{0.5em}
+\begin{minipage}[t]{0.48\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{figs/real_case_3.png}
+\end{minipage}
+\caption{Blind phase-folded outputs for the three preselected real TOI case studies, plotted at the periods returned by the frozen pipeline. The top row shows REAL-01 (TOI~174.04) and REAL-02 (TOI~4307.02); the lower panel shows REAL-03 (TOI~4580.01). All three failed the 1\% archive-period comparison. The panels are preserved as negative case studies rather than retuned into agreement.}
+\label{fig:realcases}
+\end{figure}
+
+These failures are scientifically useful. Injection--recovery asks whether a known synthetic signal can be recovered when embedded into a particular observed light curve. A real light curve can contain additional periodic variability, residual systematics, multiple astrophysical signals, dilution, imperfect archive ephemerides, and sector-dependent behavior. The mismatch therefore cautions against translating controlled recovery completeness directly into a claim that the top blind BLS period is reliable for arbitrary real candidates.
+
+\section{Discussion}
+\subsection{The central recovery--bias trade-off}
+The most robust conclusion is that preprocessing is part of the measurement model, not a cosmetic operation. In the same 1,000 physical injections, changing only the Savitzky--Golay window altered exact completeness from 0.510 to 0.733 and shifted median depth bias from $-0.865$ to $-0.385$, compared with 0.622 completeness and $-0.084$ depth bias for baseline. This is direct paired evidence that a method can improve the probability of selecting the correct period while degrading the fidelity of the measured transit depth.
+
+The mechanism is intuitive. A smoothing filter attempts to estimate slowly varying stellar/instrumental structure and divide it away. If the filter window is too short compared with the transit morphology, the trend estimate partially follows the transit itself, causing self-subtraction. This behavior is extreme for \sg{101} in our data. Longer windows preserve more of the transit while still suppressing variability, explaining why \sg{501} gives the best fixed recovery of the three filters while retaining a non-negligible negative depth bias. This is precisely why an apparently improved period-search metric should not be treated as sufficient evidence of improved physical inference.
+
+\subsection{Host variability dominates the development benchmark}
+The baseline host results range from perfect recovery for HD~102365 to zero recovery for HD~20630. That span is larger than the marginal effect of period or radius ratio. The same pattern appears in the success of fixed \sg{501} on the noisy hosts. This motivated using robust RMS as a simple host-level discriminator.
+
+The strong dependence on host identity is consistent with the broader lesson from pipeline completeness studies that detection efficiency can depend on correlated noise and stellar properties, not only nominal signal strength \cite{Christiansen2016,Christiansen2020}. However, this work should not be read as establishing robust RMS as the uniquely relevant variability descriptor. It is one scalar chosen because it was measurable before injection and because development results showed a clear failure pattern. More sophisticated future work could compare time-scale-dependent noise metrics, rotation/variability diagnostics, CDPP-like measures, wavelet features, or Gaussian-process hyperparameters.
+
+\subsection{What the held-out result does and does not show}
+The primary held-out criterion was met without retuning: small-planet exact recovery increased by 9.58 percentage points. This is stronger evidence than the development ablation because the threshold and code were frozen before the final stars were opened. The paired direction (24 gains versus one loss) is also favorable.
+
+At the same time, the host-aware bootstrap interval reaches zero. This is not a contradiction. With only three hosts, resampling can frequently draw only the two stars for which \adapt\ selected baseline, producing a zero difference. The improvement is thus real in the realized benchmark but weakly identified at the population-of-hosts level. A larger held-out host panel is necessary before claiming a stable expected improvement over a broad TESS population.
+
+The result is also mechanistically concentrated. HD~190406 was the only held-out host whose RMS crossed the threshold, and it is the only host where the preprocessing actually changed. The correct interpretation is therefore: the frozen rule successfully recognized one held-out high-RMS host for which \sg{501} improved recovery. It is not evidence that an adaptive method improves every host.
+
+\subsection{BLS and TLS in context}
+TLS is designed to exploit transit morphology more faithfully than a box model \cite{HippkeHeller2019}. Yet in the 200 cases used here, it did not improve aggregate exact or alias-aware recovery and required roughly an order of magnitude more runtime. Several factors may explain the difference from regimes where TLS has shown stronger advantages: these injections include real correlated TESS noise; the period range is short; the sample includes highly variable stars; BLS already has a flexible duration grid; and the tested radius ratios are not all at the extreme low-S/N limit. The conclusion is not that BLS is universally superior, but that method superiority must be measured in the relevant data regime.
+
+\subsection{Control behavior and the danger of thresholding after the fact}
+An early SDE$\geq6$ rule was rejected because every development no-injection control crossed it. This is a useful negative result. BLS always returns a highest-power period, and strongly structured stellar variability can produce large diagnostic SDE even without an injected planet. Choosing a threshold after seeing those controls would entangle tuning and evaluation. The project therefore retained SDE as a descriptive diagnostic and defined recovery only by known injected-period agreement. A future candidate-detection study would need a separately designed, frozen threshold-calibration experiment with an appropriate null ensemble.
+
+\subsection{Why the real TOIs failed}
+The three blind real-target failures are an important counterweight to the injection results. They show that recovering injected signals with high completeness under a known search model is not equivalent to correctly identifying the archive period of real targets. The real cases were also all assigned \sg{501}, and their folded curves at the selected BLS periods do not present a compelling validation of the archive transit. Possible contributors include other variability dominating BLS, sector selection, harmonics or unrelated periodicities, residual systematics, the finite 0.5--15~d search range, and limitations of a one-pass top-period search. Because the target-selection rule and blind results were frozen before archive comparison, these disagreements were preserved rather than repaired by target-specific tuning.
+
+\section{Limitations}
+This study is intentionally controlled and consequently narrow. The main limitations are:
+\begin{enumerate}
+\item \textbf{Small host sample.} Five development stars and three held-out stars cannot represent the diversity of TESS targets. The host-aware held-out uncertainty is correspondingly broad.
+\item \textbf{Cadence-dependent Savitzky--Golay windows.} The same 501 samples correspond to very different physical durations for 20-s and 2-min data. This makes the rule partly cadence-dependent and should be replaced by a physical-time window in future work.
+\item \textbf{Gap handling.} The simple Savitzky--Golay implementation operates over the retained sequence without explicitly segmenting around data gaps, so the effective trend near discontinuities can be undesirable.
+\item \textbf{PDCSAP starting point.} The study begins from SPOC PDCSAP light curves. Therefore the measured effect is the effect of additional downstream preprocessing on already-conditioned data, not the end-to-end response from calibrated pixels.
+\item \textbf{Injection model assumptions.} Orbits are circular, limb-darkening coefficients are fixed to $(0.3,0.2)$, impact parameters are limited to $0\leq b\leq0.7$, and there are no transit-timing variations, eccentricity, spot crossings, dilution changes, or multi-planet interactions.
+\item \textbf{Restricted search regime.} Periods are limited to 0.5--15~d and tested durations to 1--5~h. Conclusions do not directly apply to longer-period or single-transit planets.
+\item \textbf{Primary metric is period recovery.} Exact-period recovery does not require a calibrated detection threshold and therefore is different from a survey detection efficiency defined at a specified false-alarm rate.
+\item \textbf{Depth estimator.} BLS box depth and $\sqrt{\delta}$ are simplified quantities. The apparent-radius metric is explicitly not a full limb-darkened physical fit.
+\item \textbf{TLS subset.} BLS/TLS comparison uses 200 cases rather than the full 1,000-case grid, although the subset is deterministic and balanced across hosts, periods, and sizes.
+\item \textbf{Real case studies are illustrative.} Three TOIs are insufficient for a real-target performance rate, and none matched the archive period. They are preserved as examples of transfer failure rather than used to estimate population-level accuracy.
+\end{enumerate}
+
+\section{Reproducibility and research safeguards}
+The analysis notebook preserves the sequence of the project from data retrieval to the final report. Important protocol objects are written to configuration files, including \texttt{baseline\_v1}, \texttt{RECOVERY\_V2}, the Week 11 injection design, preprocessing protocol, BLS/TLS protocol, \adapt\ configuration, Week 15 primary declaration, held-out plan, and result-freeze manifests. Random seeds are stored per injection. Batch runs use checkpoint files and retain explicit failure rows rather than silently shrinking denominators.
+
+Several corrections were performed without rerunning the underlying searches. The Week 12 apparent-radius bias was recalculated from true model depth after identifying the initial mismatch between geometric \rprs\ and $\sqrt{\delta}$ under limb darkening. The Week 13 BLS alias table was repaired by recomputing categories from the already-saved true and recovered periods after a reporting bug labeled all BLS cases as misses. These corrections were versioned and documented; injections and searches were not repeated to obtain more favorable results.
+
+The held-out firewall was maintained until the final adaptive code, threshold, primary metric, success criterion, and evaluation script were frozen. After the held-out result was observed, no adaptive retuning was permitted. Real-case blind outputs were similarly saved before archive comparison. These safeguards are central to the interpretation of the final results.
+
+\section{Conclusion}
+In this controlled TESS injection--recovery study, small-planet period recovery depended strongly on preprocessing and host-star variability. The frozen baseline recovered 62.2\% of 1,000 development injections, with recovery falling toward smaller radius ratios, longer periods, and more variable hosts. Savitzky--Golay detrending could substantially improve completeness, but the same operations systematically suppressed measured transit depth. BLS and TLS produced nearly identical recovery on a balanced 200-case subset, while TLS was roughly 9.5 times slower in this implementation.
+
+A simple host-aware rule, \adapt, used robust RMS to select either no additional detrending or a 501-sample Savitzky--Golay filter. It increased development small-planet recovery from 45.5\% to 64.5\%. More importantly, after the rule and test protocol were frozen, small-planet recovery on three untouched held-out stars increased from 74.17\% to 83.75\%. The gain was concentrated in the single held-out host that crossed the variability threshold, and the host-level uncertainty remained broad. The method also produced slightly greater depth suppression. Thus the held-out result supports the underlying mechanism in this limited test but does not justify a universal performance claim.
+
+The three real TOI case studies, all of which failed to recover the archive period within 1\%, reinforce that injection completeness and real-target period identification are different problems. The broader methodological lesson is therefore twofold: preprocessing should be treated as part of the scientific measurement process, and improvements in recovery should be evaluated jointly with signal distortion, null/control behavior, and out-of-sample transfer. A larger host-diverse benchmark using physically scaled detrending windows and a separately calibrated detection threshold is the clearest next step.
+
+\clearpage
+\appendix
+\section{Frozen experimental configurations}
+\subsection{Baseline BLS configuration}
+The frozen BLS period interval was 0.5--15.0~d. Tested durations were 1, 1.5, 2, 2.5, 3, 4, and 5~h. The Astropy auto-period grid required a minimum of two transits and the BLS power calculation used oversampling factor 10. No published or injected period was provided to the search.
+
+\subsection{Injection configuration}
+All BATMAN injections used circular orbits, $\omega=90^\circ$, quadratic limb darkening $(0.3,0.2)$, supersampling factor 7, and stellar mass/radius from the TIC. Impact parameter was uniform on $[0,0.7]$. Epoch was uniform over one period from the beginning of the selected light curve. The synthetic model was multiplied into the observed normalized flux.
+
+\subsection{Recovery configuration}
+\textsc{RECOVERY\_V2} uses 1\% tolerance for exact, half, and double-period classes and 2\% for near matches. Primary recovery is exact only; alias-aware recovery includes exact, half, and double aliases.
+
+\section{Additional quantitative results}
+\subsection{Week 11 marginal completeness}
+\begin{table}[htbp]
+\centering
+\caption{Baseline completeness marginalized by injected radius ratio.}
+\small
+\begin{tabular}{lrrr}
+\toprule
+\rprs & Attempts & Exact & Completeness\\
+\midrule
+0.015 & 200 & 76  & 0.380\\
+0.025 & 200 & 106 & 0.530\\
+0.040 & 200 & 136 & 0.680\\
+0.060 & 200 & 151 & 0.755\\
+0.090 & 200 & 153 & 0.765\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Baseline completeness marginalized by period.}
+\small
+\begin{tabular}{lrrr}
+\toprule
+Period (d) & Attempts & Exact & Completeness\\
+\midrule
+1  & 250 & 170 & 0.680\\
+3  & 250 & 162 & 0.648\\
+6  & 250 & 158 & 0.632\\
+10 & 250 & 132 & 0.528\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Week 12 completeness by planet size}
+\begin{table}[htbp]
+\centering
+\caption{Exact completeness by injected radius ratio for each preprocessing method.}
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+Method & 0.015 & 0.025 & 0.040 & 0.060 & 0.090\\
+\midrule
+\baseline & 0.380 & 0.530 & 0.680 & 0.755 & 0.765\\
+\sg{101} & 0.155 & 0.355 & 0.640 & 0.670 & 0.730\\
+\sg{301} & 0.375 & 0.700 & 0.745 & 0.770 & 0.865\\
+\sg{501} & 0.425 & 0.750 & 0.765 & 0.795 & 0.930\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Week 13 algorithm detail}
+\begin{table}[htbp]
+\centering
+\caption{BLS/TLS comparison on the 200-case balanced subset.}
+\small
+\begin{tabular}{lrrr}
+\toprule
+Metric & BLS & TLS\\
+\midrule
+Exact recoveries & 128 & 126\\
+Exact completeness & 0.640 & 0.630\\
+Alias-aware completeness & 0.640 & 0.640\\
+Median search runtime (s) & 3.38 & 32.13\\
+Exact category & 128 & 126\\
+Half aliases & 0 & 2\\
+Misses & 72 & 72\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Week 15 primary and secondary results}
+\begin{table}[htbp]
+\centering
+\caption{Frozen held-out results. Primary rows are the 240 small-planet injections; overall rows use all 600 injections.}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+Method & Small exact & Small $C$ & Small 95\% CI & Overall exact & Overall $C$ & Alias-aware $C$\\
+\midrule
+\baseline & 178/240 & 0.7417 & [0.6828,0.7929] & 534/600 & 0.8900 & 0.8950\\
+\adapt    & 201/240 & 0.8375 & [0.7856,0.8788] & 554/600 & 0.9233 & 0.9283\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+
+\subsection{Week 13 recovery by size and period}
+\begin{table}[htbp]
+\centering
+\caption{Exact completeness in the BLS/TLS subset by injected radius ratio and period.}
+\small
+\begin{tabular}{lrrrrrrrrr}
+\toprule
+& \multicolumn{5}{c}{Radius ratio} & \multicolumn{4}{c}{Period (days)}\\
+\cmidrule(lr){2-6}\cmidrule(lr){7-10}
+Method & 0.015 & 0.025 & 0.040 & 0.060 & 0.090 & 1 & 3 & 6 & 10\\
+\midrule
+BLS & 0.375 & 0.600 & 0.675 & 0.800 & 0.750 & 0.680 & 0.640 & 0.640 & 0.600\\
+TLS & 0.375 & 0.600 & 0.700 & 0.725 & 0.750 & 0.680 & 0.680 & 0.600 & 0.560\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Week 14 threshold ablation}
+\begin{table}[htbp]
+\centering
+\caption{Development ablation over candidate robust-RMS thresholds. The frozen value is $2.15\times10^{-4}$.}
+\small
+\begin{tabular}{rrrrr}
+\toprule
+Threshold & Overall $C$ & Small $C$ & Baseline hosts & SG501 hosts\\
+\midrule
+0            & 0.733 & 0.5875 & 0 & 5\\
+$1.40\times10^{-4}$ & 0.733 & 0.5875 & 1 & 4\\
+$2.15\times10^{-4}$ & 0.763 & 0.6450 & 2 & 3\\
+$5.49\times10^{-4}$ & 0.733 & 0.5700 & 3 & 2\\
+$3.475\times10^{-3}$ & 0.666 & 0.4550 & 4 & 1\\
+$9.5723\times10^{-2}$ & 0.622 & 0.4550 & 5 & 0\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Week 15 held-out completeness slices}
+\begin{table}[htbp]
+\centering
+\caption{Held-out exact completeness by injected radius ratio and orbital period.}
+\small
+\begin{tabular}{lrrrrrrrrr}
+\toprule
+& \multicolumn{5}{c}{Radius ratio} & \multicolumn{4}{c}{Period (days)}\\
+\cmidrule(lr){2-6}\cmidrule(lr){7-10}
+Method & 0.015 & 0.025 & 0.040 & 0.060 & 0.090 & 1 & 3 & 6 & 10\\
+\midrule
+Baseline & 0.5083 & 0.9750 & 1.0000 & 0.9917 & 0.9750 & 0.9733 & 0.9067 & 0.8533 & 0.8267\\
+ADAPT-v1 & 0.6917 & 0.9833 & 1.0000 & 0.9750 & 0.9667 & 1.0000 & 0.9733 & 0.9000 & 0.8200\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Held-out exact completeness by host.}
+\small
+\begin{tabular}{lrrr}
+\toprule
+Host & Baseline & ADAPT-v1 & Difference\\
+\midrule
+HD 190406 & 0.82 & 0.92 & +0.10\\
+HD 38858  & 0.98 & 0.98 & 0.00\\
+HD 10307  & 0.87 & 0.87 & 0.00\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{No-injection control diagnostics}
+\begin{table}[htbp]
+\centering
+\caption{Held-out no-injection BLS diagnostics. These values are not thresholded into false positives.}
+\small
+\begin{tabular}{llrrr}
+\toprule
+Host & Method & Found period (d) & BLS SDE & Found depth\\
+\midrule
+HD 190406 & Baseline & 4.5893 & 53.734 & 0.000248\\
+HD 190406 & ADAPT-v1 & 1.0065 & 7.833 & 0.000012\\
+HD 38858  & Baseline & 6.9165 & 17.266 & 0.000074\\
+HD 38858  & ADAPT-v1 & 6.9165 & 17.266 & 0.000074\\
+HD 10307  & Baseline & 11.4297 & 11.500 & 0.000424\\
+HD 10307  & ADAPT-v1 & 11.4297 & 11.500 & 0.000424\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Real-target case-study table}
+\begin{table}[htbp]
+\centering
+\caption{Blind real-TOI outputs compared only after blind result files were frozen. Depth comparison uses archive depth converted to fractional flux.}
+\small
+\begin{tabular}{lrrrrrrr}
+\toprule
+Case & TOI & Disp. & $P_{\rm found}$ & $P_{\rm archive}$ & Frac. period error & Found depth & Archive depth\\
+\midrule
+REAL-01 & 174.04  & CP & 14.9509 & 3.97668 & 2.7596 & 0.000351 & 0.000142\\
+REAL-02 & 4307.02 & PC & 9.04317 & 4.65458 & 0.9429 & 0.000166 & 0.0000246\\
+REAL-03 & 4580.01 & PC & 8.17107 & 0.916799 & 7.9126 & 0.000294 & 0.0000390\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Data and code availability statement}
+The computational analysis is contained in the accompanying project notebook and its generated configuration/result files. The notebook records target identities, injection seeds, frozen parameter grids, paired preprocessing runs, correction logs, held-out manifests, and real-case blind outputs. The project code, notebook, configuration files, and released results are available at \url{https://github.com/ayeshawq1/tess-small-planet-recovery/tree/main}. An archival DOI may be added in a future release if the repository is deposited in a long-term archive.
+
+\section*{Acknowledgements}
+This research made use of TESS data products from MAST, the NASA Exoplanet Archive, Lightkurve, Astropy, astroquery, \texttt{batman}, and Transit Least Squares. Project-specific supervision, fellowship, institutional, and funding acknowledgements should be added before public submission where applicable.
+
+\begin{thebibliography}{99}
+\bibitem{Ricker2015} Ricker, G. R., Winn, J. N., Vanderspek, R., et al. 2015, ``Transiting Exoplanet Survey Satellite,'' \textit{Journal of Astronomical Telescopes, Instruments, and Systems}, 1, 014003. doi:10.1117/1.JATIS.1.1.014003.
+\bibitem{Jenkins2016} Jenkins, J. M., Twicken, J. D., McCauliff, S., et al. 2016, ``The TESS Science Processing Operations Center,'' \textit{Proc. SPIE}, 9913, 99133E. doi:10.1117/12.2233418.
+\bibitem{Kovacs2002} Kov\'acs, G., Zucker, S., \& Mazeh, T. 2002, ``A box-fitting algorithm in the search for periodic transits,'' \textit{Astronomy \& Astrophysics}, 391, 369--377. doi:10.1051/0004-6361:20020802.
+\bibitem{HippkeHeller2019} Hippke, M., \& Heller, R. 2019, ``Transit Least Squares: Optimized transit detection algorithm to search for periodic transits of small planets,'' \textit{Astronomy \& Astrophysics}, 623, A39. doi:10.1051/0004-6361/201834672.
+\bibitem{Kreidberg2015} Kreidberg, L. 2015, ``batman: BAsic Transit Model cAlculatioN in Python,'' \textit{Publications of the Astronomical Society of the Pacific}, 127, 1161. doi:10.1086/683602.
+\bibitem{SavitzkyGolay1964} Savitzky, A., \& Golay, M. J. E. 1964, ``Smoothing and Differentiation of Data by Simplified Least Squares Procedures,'' \textit{Analytical Chemistry}, 36, 1627--1639. doi:10.1021/ac60214a047.
+\bibitem{Christiansen2013} Christiansen, J. L., Clarke, B. D., Burke, C. J., et al. 2013, ``Measuring Transit Signal Recovery in the Kepler Pipeline. I. Individual Events,'' \textit{ApJS}, 207, 35. doi:10.1088/0067-0049/207/2/35.
+\bibitem{Christiansen2016} Christiansen, J. L., Clarke, B. D., Burke, C. J., et al. 2016, ``Measuring Transit Signal Recovery in the Kepler Pipeline. III. Completeness of the Q1--Q17 DR24 Planet Candidate Catalogue,'' \textit{ApJ}, 828, 99. doi:10.3847/0004-637X/828/2/99.
+\bibitem{Christiansen2020} Christiansen, J. L., Clarke, B. D., Burke, C. J., et al. 2020, ``Measuring Transit Signal Recovery in the Kepler Pipeline. IV. Completeness of the DR25 Planet Candidate Catalog,'' arXiv:2010.04796.
+\bibitem{Lightkurve2018} Lightkurve Collaboration et al. 2018, ``Lightkurve: Kepler and TESS time series analysis in Python,'' \textit{Astrophysics Source Code Library}, ascl:1812.013.
+\bibitem{Astropy2022} Astropy Collaboration et al. 2022, ``The Astropy Project: Sustaining and Growing a Community-oriented Open-source Project and the Latest Major Release (v5.0) of the Core Package,'' \textit{ApJ}, 935, 167. doi:10.3847/1538-4357/ac7c74.
+\bibitem{Ginsburg2019} Ginsburg, A., Sip\H{o}cz, B. M., Brasseur, C. E., et al. 2019, ``astroquery: An Astronomical Web-querying Package in Python,'' \textit{AJ}, 157, 98. doi:10.3847/1538-3881/aafc33.
+\bibitem{Stassun2019} Stassun, K. G., Oelkers, R. J., Paegert, M., et al. 2019, ``The Revised TESS Input Catalog and Candidate Target List,'' \textit{AJ}, 158, 138. doi:10.3847/1538-3881/ab3467.
+\bibitem{Akeson2013} Akeson, R. L., Chen, X., Ciardi, D., et al. 2013, ``The NASA Exoplanet Archive: Data and Tools for Exoplanet Research,'' \textit{PASP}, 125, 989--999. arXiv:1307.2944.
+\end{thebibliography}
+
+\end{document}
