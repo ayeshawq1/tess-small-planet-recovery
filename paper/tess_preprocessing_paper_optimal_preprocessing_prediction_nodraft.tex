@@ -1,0 +1,303 @@
+\documentclass[10pt,twocolumn]{article}
+
+\usepackage[letterpaper,margin=0.72in,columnsep=0.25in]{geometry}
+\usepackage{graphicx}
+\graphicspath{{./}}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{microtype}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{array}
+\usepackage{float}
+\usepackage{dblfloatfix}
+\usepackage{url}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  citecolor=black,
+  urlcolor=blue
+}
+
+\setlength{\parindent}{1em}
+\setlength{\parskip}{0pt}
+\captionsetup{font=small,labelfont=bf}
+
+\title{\textbf{Optimal Preprocessing Prediction for Small-Planet Recovery in TESS Light Curves}}
+
+\author{Ayesha Waqas\\
+\small Independent Researcher}
+\date{}
+
+\begin{document}
+
+\twocolumn[
+\maketitle
+\begin{abstract}
+Detecting small transiting planets in TESS photometry depends not only on signal strength and stellar variability, but also on how a light curve is preprocessed before the transit search. We test whether preprocessing can be selected adaptively using properties of the light curve measured before any transit search is run. We constructed a controlled injection--recovery experiment using real TESS light curves and four preprocessing strategies: a baseline treatment and three Savitzky--Golay configurations. Synthetic transits were injected into the observed photometry and recovered with a frozen Box Least Squares (BLS) search pipeline. Experimental recovery outcomes were used to derive host-level preprocessing labels and train several classifiers. A Random Forest was selected using downstream validation recovery and frozen before evaluation on 20 previously unseen stars. Across 1,200 primary small-planet injections in the heldout sample, the learned policy achieved 415 exact-period recoveries (34.58\%), compared with 386 (32.17\%) for a prespecified RMS-threshold adaptive rule and 317 (26.42\%) for the preprocessing method selected globally from the training data. A non-deployable host-specific oracle achieved 451 recoveries (37.58\%). Host-aware bootstrap resampling yielded an improvement of +8.17 percentage points over the fixed strategy (95\% interval +1.17 to +16.25) and +2.42 percentage points over the adaptive rule (95\% interval -1.17 to +6.67). These results show that pre-search light-curve properties contain useful information about preprocessing choice and support adaptive, host-dependent preprocessing as a practical route to improved small-planet recovery in TESS data.
+\end{abstract}
+\vspace{0.7em}
+]
+
+\section{Introduction}
+
+The Transiting Exoplanet Survey Satellite (TESS) was designed to discover transiting planets around bright nearby stars across most of the sky \cite{ricker2015}. Its high-cadence photometry has enabled a large and diverse exoplanet sample, but the recovery of small planets remains challenging because weak transit signals compete with photon noise, instrumental systematics, data gaps, and intrinsic stellar variability. In this regime, decisions made before the transit search can materially affect whether a shallow periodic signal is preserved or suppressed.
+
+Transit searches are often treated as a sequence in which the light curve is cleaned or detrended and then passed to a search algorithm such as Box Least Squares (BLS) \cite{kovacs2002}. BLS is well matched to the approximately box-shaped morphology of many transits and remains widely used. More specialized searches, including Transit Least Squares (TLS), can improve sensitivity in some regimes by using more realistic transit templates \cite{hippke2019}. Regardless of the search algorithm, however, preprocessing remains a consequential upstream choice.
+
+A common assumption is that one preprocessing recipe can be selected globally and then applied to every star. This is convenient but physically questionable: TESS targets differ in variability amplitude, temporal correlation, observing baseline, cadence, data gaps, and stellar properties. A filter that suppresses low-frequency variability for one star may distort a weak transit for another. Savitzky--Golay filtering \cite{savitzky1964}, for example, provides a simple tunable mechanism for removing smooth variability, but the choice of window length controls a trade-off between detrending strength and transit preservation.
+
+This study asks a narrower and operationally useful question: \emph{can we predict, before running a full transit search, which preprocessing strategy will maximize small-planet recovery for a given TESS light curve?} We address this with a frozen-protocol injection--recovery design. Real TESS light curves provide the noise and variability background; synthetic transits generated with \texttt{batman} \cite{kreidberg2015} provide controlled signals; and a fixed BLS search provides a common downstream test. The resulting experimental outcomes define which preprocessing method works best for each development host. We then train machine-learning classifiers to predict that choice using only features available before the transit search.
+
+The scientific endpoint is deliberately downstream: the primary metric is exact-period recovery on unseen stars, not label-classification accuracy. This distinction matters because two preprocessing choices can receive different labels yet produce similar transit-recovery performance. We therefore select the final model using validation-set recovery and evaluate it once on a heldout set of 20 hosts under a prespecified success criterion.
+
+\section{Data and Frozen Search Protocol}
+
+\subsection{TESS light curves}
+
+We used real TESS light curves from the SPOC pipeline, preferring PDCSAP flux. Samples with nonzero quality flags were excluded and each light curve was median normalized. The baseline preprocessing intentionally avoided additional outlier removal or detrending so that subsequent preprocessing comparisons were explicit and controlled. The final Phase 2 sample contained 100 usable host stars spanning multiple TESS sectors. Stellar selection was restricted to broadly Sun-like stars, with effective temperatures of approximately 4500--6500 K and stellar masses and radii in the range 0.7--1.4 in solar units.
+
+The 100 hosts were divided before model fitting into 60 TRAIN, 20 VALIDATION, and 20 HELDOUT stars. Splitting was stratified by robust light-curve RMS so that variability regimes were represented across the three subsets. HELDOUT stars were not used for model fitting, feature selection, model selection, or threshold tuning.
+
+\subsection{Frozen BLS search}
+
+The transit-search configuration was fixed before Phase 2 model selection. BLS was evaluated over periods from 0.5 to 15 days using trial durations of 1, 1.5, 2, 2.5, 3, 4, and 5 hours, an oversampling factor of 10, and a requirement of at least two transits within the observing baseline. The pipeline was validated on known transiting systems, recovering the correct top period for WASP-18, WASP-19, WASP-43, WASP-121, and WASP-4 under the frozen configuration.
+
+The primary recovery criterion was top-period exact recovery within 1\% of the injected period. Half-period and double-period matches were retained as secondary alias-aware outcomes. Signal detection efficiency (SDE) was treated as a continuous diagnostic rather than a frozen detection threshold; consequently, this work does not make false-positive-rate claims.
+
+\section{Injection--Recovery Experiment}
+
+\subsection{Synthetic transit injections}
+
+Synthetic transit signals were generated with \texttt{batman} \cite{kreidberg2015} and injected multiplicatively into the real, quality-filtered, median-normalized light curves before any candidate detrending was applied. Transit truth was never passed to the search stage.
+
+For each host, the injection grid contained four periods,
+\[
+P \in \{1,3,6,10\}\ \mathrm{days},
+\]
+six radius ratios,
+\[
+R_p/R_\star \in \{0.015,0.020,0.025,0.030,0.040,0.060\},
+\]
+and five stochastic repetitions per grid point. This produced 120 injections per host. Across 100 hosts, the experiment therefore contained 12,000 unique injected signals. Each injection was evaluated through four preprocessing methods, yielding 48,000 paired preprocessing-and-search evaluations.
+
+The primary ``small-planet'' subset was prespecified as
+\[
+R_p/R_\star \leq 0.025,
+\]
+which corresponds to 60 injections per host.
+
+\subsection{Candidate preprocessing methods}
+
+Four preprocessing strategies were compared:
+
+\begin{enumerate}[leftmargin=1.2em,itemsep=1pt]
+    \item \textbf{BASELINE}: no additional detrending beyond the frozen quality filtering and median normalization;
+    \item \textbf{SG101}: Savitzky--Golay detrending with a 101-point window;
+    \item \textbf{SG301}: Savitzky--Golay detrending with a 301-point window;
+    \item \textbf{SG501}: Savitzky--Golay detrending with a 501-point window.
+\end{enumerate}
+
+Each injected light curve was passed through all four methods, preserving a paired experimental design.
+
+\subsection{Experimental preprocessing labels}
+
+A host-level label was assigned using only TRAIN and VALIDATION outcomes. Methods were ranked by a frozen hierarchy: (1) number of exact-period recoveries, (2) number of alias-aware recoveries, (3) smallest absolute median fractional depth bias among exact recoveries, and (4) a deterministic tie order of BASELINE, SG501, SG301, then SG101. This produced an experimentally grounded target representing the preprocessing method that best served the downstream recovery objective for that host.
+
+The resulting labels were imbalanced. Across the 80 development hosts, BASELINE was optimal for 47 hosts, SG501 for 20, SG301 for 11, and SG101 for 2. This imbalance was preserved rather than artificially redefined.
+
+\section{Predicting the Preprocessing Choice}
+
+\subsection{Pre-search features}
+
+Twenty features were computed from each light curve before any transit search. They described robust scatter, point-to-point noise, observing baseline and cadence, gap structure, low-frequency variability, temporal autocorrelation, and stellar metadata. No feature used the injected period, injected depth, BLS output, recovery label, or any other post-search quantity.
+
+A prespecified reduced 13-feature subset was used for the linear model, while tree-based models used the full 20-feature representation. Scaling for the linear model was fit on TRAIN data only.
+
+\subsection{Candidate models and model selection}
+
+We compared logistic regression, decision tree, Random Forest \cite{breiman2001}, gradient boosting, and a compact multilayer perceptron. Classical machine-learning models were implemented with scikit-learn \cite{pedregosa2011}. The neural network was included before the final validation comparison and was treated as an additional candidate; it did not alter the heldout protocol.
+
+The final model was selected using a frozen hierarchy in which the primary metric was downstream exact-period recovery on VALIDATION small-planet injections, followed by macro-F1, balanced accuracy, and model simplicity. This is intentionally different from selecting on classification accuracy alone.
+
+\begin{table}[t]
+\centering
+\caption{Validation-set model comparison. Downstream recovery is the primary selection metric.}
+\label{tab:validation}
+\begin{tabular}{lrrr}
+\toprule
+Model & Exact rec. & Bal. acc. & Macro-F1 \\
+\midrule
+Random Forest & 0.3967 & 0.350 & 0.329 \\
+Gradient boosting & 0.3867 & 0.300 & 0.267 \\
+Decision tree & 0.3717 & 0.452 & 0.381 \\
+MLP & 0.3325 & 0.220 & 0.183 \\
+Logistic regression & 0.3008 & 0.129 & 0.103 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The Random Forest achieved the highest validation downstream exact recovery, 476/1200 (39.67\%), and was therefore frozen as the final learned recommender. Its advantage at validation was deliberately treated as modest: ADAPT-v1 and fixed SG501 each achieved 474/1200 (39.50\%).
+
+\subsection{Benchmarks and heldout success criterion}
+
+The frozen learned policy was compared against four benchmarks:
+
+\begin{enumerate}[leftmargin=1.2em,itemsep=1pt]
+    \item each individual fixed preprocessing method;
+    \item \textbf{ADAPT-v1}, a prespecified rule choosing BASELINE for robust RMS $\leq 2.15\times10^{-4}$ and SG501 otherwise;
+    \item the \textbf{TRAIN-selected best fixed method}, chosen only from TRAIN small-planet outcomes; and
+    \item a non-deployable \textbf{oracle} that selected the best preprocessing method separately for each heldout host after observing recovery outcomes.
+\end{enumerate}
+
+BASELINE was the TRAIN-selected best fixed method, with 1209/3600 exact recoveries (33.58\%) on the TRAIN small-planet subset. The predeclared Phase 2 success criterion required the frozen learned policy to exceed both ADAPT-v1 and the TRAIN-selected best fixed strategy on HELDOUT small-planet exact recovery. No model, threshold, label rule, feature set, or preprocessing configuration was changed after heldout evaluation began.
+
+\section{Results}
+
+\subsection{Heldout evaluation}
+
+The final heldout experiment comprised 20 unseen stars, 2,400 unique injected signals, and 9,600 paired preprocessing-and-search evaluations. All 2,400 cases completed successfully, with zero failed method rows. The primary small-planet subset contained 1,200 unique injections.
+
+The Random Forest achieved 415/1200 exact-period recoveries (34.58\%), the highest rate among the deployable strategies. ADAPT-v1 recovered 386/1200 (32.17\%), while the TRAIN-selected fixed BASELINE strategy recovered 317/1200 (26.42\%). The learned policy therefore improved exact recovery by +2.42 percentage points relative to ADAPT-v1 and by +8.17 percentage points relative to the TRAIN-selected fixed strategy.
+
+The same ordering held for the alias-aware endpoint: Random Forest 446/1200 (37.17\%), ADAPT-v1 406/1200 (33.83\%), and BASELINE 344/1200 (28.67\%).
+
+The non-deployable oracle recovered 451/1200 exact periods (37.58\%). Thus, the frozen Random Forest finished only 3.00 percentage points below the oracle upper reference within the tested four-method action space.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\columnwidth]{figure1_heldout_recovery.png}
+\caption{Heldout exact-period recovery on the primary 1,200-injection small-planet subset. The frozen Random Forest achieved the highest deployable recovery rate, while the oracle shows the upper reference available from perfect host-specific method selection within the four tested preprocessing strategies.}
+\label{fig:headline}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\caption{Primary HELDOUT small-planet recovery.}
+\label{tab:heldout}
+\begin{tabular}{lrr}
+\toprule
+Policy & Exact & Alias-aware \\
+\midrule
+Oracle & 451 (37.58\%) & 485 (40.42\%) \\
+Random Forest & 415 (34.58\%) & 446 (37.17\%) \\
+ADAPT-v1 & 386 (32.17\%) & 406 (33.83\%) \\
+SG501 & 386 (32.17\%) & 406 (33.83\%) \\
+BASELINE & 317 (26.42\%) & 344 (28.67\%) \\
+SG301 & 278 (23.17\%) & 290 (24.17\%) \\
+SG101 & 79 (6.58\%) & 88 (7.33\%) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Host-to-host heterogeneity}
+
+Recovery performance varied substantially across the 20 heldout stars (Figure~\ref{fig:perhost}). For P2HOST-001, the learned policy achieved 48.3\% exact recovery versus 25.0\% for ADAPT-v1. For P2HOST-102, the learned policy recovered 25.0\% of injected signals while ADAPT-v1 recovered none. Several hosts showed identical performance under the learned and adaptive policies, while a smaller subset favored ADAPT-v1. This heterogeneity is central to the motivation for target-dependent preprocessing and motivates host-level rather than injection-level uncertainty estimation.
+
+\begin{figure*}[!tbp]
+\centering
+\includegraphics[width=0.96\textwidth]{figure2_per_host.png}
+\caption{Exact-period recovery across the 20 heldout hosts. Each host contributes 60 primary small-planet injections. The large host-to-host variation demonstrates that the value of a preprocessing choice is not uniform across targets.}
+\label{fig:perhost}
+\end{figure*}
+
+\subsection{Host-aware uncertainty}
+
+Because multiple injections on the same star share the same stellar variability and observing window, treating all 1,200 injections as independent would understate uncertainty. We therefore used a host-aware bootstrap: 20 complete hosts were sampled with replacement for each of 10,000 bootstrap replicates, and policy-level exact-recovery differences were recomputed.
+
+The observed Random Forest improvement over the TRAIN-selected fixed strategy was +8.17 percentage points, with a 95\% percentile interval of +1.17 to +16.25 percentage points. The Random Forest exceeded the fixed strategy in 99.01\% of bootstrap replicates.
+
+The improvement over ADAPT-v1 was smaller: +2.42 percentage points, with a 95\% interval from -1.17 to +6.67 percentage points. The Random Forest exceeded ADAPT-v1 in 88.81\% of bootstrap replicates. The predeclared heldout success criterion was therefore met on the observed sample, but the uncertainty analysis provides stronger evidence for improvement over globally fixed preprocessing than for a universal advantage over the simpler adaptive threshold rule.
+
+\begin{figure*}[!tbp]
+\centering
+\includegraphics[width=0.96\textwidth]{figure3_bootstrap.png}
+\caption{Host-aware bootstrap uncertainty from 10,000 resamples. Left: Random Forest minus ADAPT-v1. Right: Random Forest minus the TRAIN-selected fixed BASELINE strategy. Solid vertical lines mark observed differences, the dashed line marks zero, and dotted lines mark the 95\% percentile interval.}
+\label{fig:bootstrap}
+\end{figure*}
+
+\subsection{Agreement with the heldout oracle}
+
+The Random Forest selected exactly the same preprocessing method as the heldout oracle for 9 of 20 hosts (45\%; Figure~\ref{fig:oracle}). The modest categorical agreement contrasts with the much smaller gap in downstream recovery: 34.58\% for the Random Forest versus 37.58\% for the oracle. This indicates that preprocessing labels are not equally consequential. A method can differ from the oracle label while producing nearly equivalent recovery if multiple preprocessing choices perform similarly for a given host. This observation supports the use of downstream recovery, rather than label accuracy alone, as the scientifically relevant model-selection endpoint.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\columnwidth]{figure4_oracle.png}
+\caption{Random Forest preprocessing recommendations compared with the heldout oracle. Exact categorical agreement was 9/20 (45\%), yet downstream recovery remained close to the oracle, indicating that some label disagreements have small practical cost.}
+\label{fig:oracle}
+\end{figure}
+
+\section{Discussion}
+
+The central result is that preprocessing for small-planet transit searches need not be treated as a fixed global operation. Properties measurable from a TESS light curve before transit searching contain useful information about which preprocessing treatment is likely to preserve or enhance weak periodic signals.
+
+The heldout ranking is especially informative: 26.42\% exact recovery for the TRAIN-selected fixed BASELINE, 32.17\% for the simple ADAPT-v1 rule, 34.58\% for the learned Random Forest, and 37.58\% for the non-deployable oracle. This progression suggests that two effects are present. First, adapting preprocessing to the host matters. Second, a multifeature decision rule can capture additional information beyond a single robust-RMS threshold, although the incremental advantage over ADAPT-v1 is less certain than the advantage over a fixed pipeline.
+
+The Random Forest should not be interpreted as a transit detector. It operates upstream of the BLS search and does not see the injected period, transit depth, or any BLS result. Its role is closer to a preprocessing controller: given the statistical character of a light curve, it recommends one of several already defined treatments. This separation is useful because it allows adaptive preprocessing to be inserted into established search pipelines without replacing the search algorithm itself.
+
+The oracle comparison provides an estimate of the remaining headroom within the tested method set. Perfect host-level method selection would increase exact recovery from 34.58\% to 37.58\%, only three percentage points above the learned policy. At the same time, the oracle is restricted to four candidate actions and therefore should not be interpreted as a fundamental physical limit. Additional detrenders, continuous hyperparameter selection, or joint optimization with the search algorithm could raise the ceiling.
+
+The bootstrap result defines the appropriate strength of the main claim. The improvement over the TRAIN-selected fixed strategy is robust at the host level: its 95\% interval remains above zero. In contrast, the 95\% interval for the Random Forest versus ADAPT-v1 crosses zero. We therefore do not claim that the Random Forest is universally superior to ADAPT-v1. The stronger conclusion is that host-dependent preprocessing improves recovery relative to globally fixed preprocessing, and that a learned multifeature policy is a promising extension of a simpler adaptive rule.
+
+The host-level results also suggest a direction beyond hard classification. Future models could predict the expected recovery of each candidate preprocessing method, or the expected regret from choosing one method over another. Such a system could abstain when multiple methods are effectively equivalent and make stronger recommendations only when the expected downstream difference is large.
+
+\subsection{Limitations}
+
+Several limitations bound the interpretation of this study. First, the heldout sample contained 20 hosts. Although each host supported 60 primary injections, the number of statistically independent stellar environments is therefore modest, which is reflected in the bootstrap interval width. Second, the action space contained only BASELINE and three Savitzky--Golay windows. Third, the primary search used a single frozen BLS configuration; the relative value of preprocessing may change with a different search algorithm. Fourth, the study used SPOC TESS light curves and a restricted stellar parameter range, so external validity to other pipelines, cadences, or stellar populations remains to be tested. Fifth, no frozen SDE decision threshold was used, so these results concern top-period recovery rather than a calibrated end-to-end planet-detection false-positive rate.
+
+These constraints are deliberate rather than hidden: the experiment was designed to isolate whether preprocessing choice itself is predictable and useful under a controlled search protocol. Larger host samples and a richer preprocessing action space are natural next steps.
+
+\section{Conclusions}
+
+We developed and tested a framework for predicting which preprocessing strategy is most likely to improve small-planet recovery in TESS light curves. Controlled synthetic transits were injected into real TESS photometry, four preprocessing strategies were evaluated through the same frozen BLS search, and the resulting host-level outcomes were used to train preprocessing recommenders from pre-search light-curve features.
+
+A Random Forest was selected on validation data and frozen before evaluation on 20 unseen stars. On the primary heldout small-planet experiment it achieved 34.58\% exact-period recovery, compared with 32.17\% for ADAPT-v1 and 26.42\% for the TRAIN-selected fixed strategy. A restricted oracle achieved 37.58\%. The learned policy therefore satisfied the prespecified heldout success criterion. Host-aware uncertainty showed strong evidence for improvement over globally fixed preprocessing, while the smaller advantage over ADAPT-v1 remained uncertain.
+
+The practical conclusion is that the appropriate preprocessing of a TESS light curve depends on measurable characteristics of that light curve, and part of this dependence can be learned before the transit search is run. Rather than applying one preprocessing pipeline blindly to every target, future transit searches can treat preprocessing as an adaptive decision made separately for each star.
+
+\section*{Data and Code Availability}
+
+The analysis was performed on publicly available TESS light curves. Machine-readable experiment outputs, frozen configuration files, and the analysis code should be archived with the public preprint/repository before journal submission. A permanent repository URL and software version identifier should be inserted here before submission.
+
+\section*{Generative AI Disclosure}
+
+OpenAI ChatGPT was used under human supervision for code debugging, visualization refinement, and manuscript editing. All analyses were run on the project data, and all numerical results, figures, and scientific interpretations were checked and approved by the author.
+
+\section*{Acknowledgments}
+
+This work made use of observations from the NASA Transiting Exoplanet Survey Satellite (TESS) mission and the \texttt{Lightkurve} Python package for Kepler and TESS time-series analysis \cite{lightkurve2018}. The author thanks the developers of the open-source scientific Python ecosystem used in this work.
+
+\begin{thebibliography}{99}
+
+\bibitem{ricker2015}
+Ricker, G. R., Winn, J. N., Vanderspek, R., et al. 2015, ``Transiting Exoplanet Survey Satellite (TESS),'' \textit{Journal of Astronomical Telescopes, Instruments, and Systems}, 1, 014003. doi:10.1117/1.JATIS.1.1.014003.
+
+\bibitem{kovacs2002}
+Kov\'acs, G., Zucker, S., \& Mazeh, T. 2002, ``A box-fitting algorithm in the search for periodic transits,'' \textit{Astronomy \& Astrophysics}, 391, 369--377. doi:10.1051/0004-6361:20020802.
+
+\bibitem{savitzky1964}
+Savitzky, A., \& Golay, M. J. E. 1964, ``Smoothing and Differentiation of Data by Simplified Least Squares Procedures,'' \textit{Analytical Chemistry}, 36, 1627--1639. doi:10.1021/ac60214a047.
+
+\bibitem{kreidberg2015}
+Kreidberg, L. 2015, ``\texttt{batman}: BAsic Transit Model cAlculatioN in Python,'' \textit{Publications of the Astronomical Society of the Pacific}, 127, 1161--1165. doi:10.1086/683602.
+
+\bibitem{hippke2019}
+Hippke, M., \& Heller, R. 2019, ``Optimized transit detection algorithm to search for periodic transits of small planets,'' \textit{Astronomy \& Astrophysics}, 623, A39. doi:10.1051/0004-6361/201834672.
+
+\bibitem{breiman2001}
+Breiman, L. 2001, ``Random Forests,'' \textit{Machine Learning}, 45, 5--32. doi:10.1023/A:1010933404324.
+
+\bibitem{pedregosa2011}
+Pedregosa, F., Varoquaux, G., Gramfort, A., et al. 2011, ``Scikit-learn: Machine Learning in Python,'' \textit{Journal of Machine Learning Research}, 12, 2825--2830.
+
+\bibitem{lightkurve2018}
+Lightkurve Collaboration, Cardoso, J. V. d. M., Hedges, C., et al. 2018, ``Lightkurve: Kepler and TESS time series analysis in Python,'' \textit{Astrophysics Source Code Library}, ascl:1812.013.
+
+\end{thebibliography}
+
+\end{document}
